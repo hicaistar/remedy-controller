@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remedy-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s.app: remedy-controller
+  template:
+    metadata:
+      name: remedy-controller
+      labels:
+        k8s.app: remedy-controller
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: kube-master-1
+      containers:
+      - image: remedy-controller
+        imagePullPolicy: IfNotPresent
+        name: remedy
+        command:
+        - /remedy-controller
+        - --logtostderr=true
+        - --v=2
+        - --monitors=/config/kernel-monitor.json
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: node-problem-detector-config

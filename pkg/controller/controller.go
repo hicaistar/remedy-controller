@@ -2,16 +2,22 @@ package controller
 
 import (
 	"time"
+	"io/ioutil"
+	"encoding/json"
+
 	"github.com/golang/glog"
+
 	"k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/cache"
-	clientset "k8s.io/client-go/kubernetes"
-	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/informers"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/apimachinery/pkg/util/wait"
+	clientset "k8s.io/client-go/kubernetes"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	nodeutil "k8s.io/kubernetes/pkg/controller/util/node"
+
+	"remedy-controller/cmd/options"
 )
 
 
@@ -24,7 +30,18 @@ type Controller struct {
 	kubeClient          clientset.Interface
 }
 
-func NewRemedyController() (*Controller, error) {
+func NewRemedyController(options *options.RemedyControllerOptions) (*Controller, error) {
+	// parse config path to rules
+	var rules []Rule
+	for _, configPath := range options.MonitorConfigPaths {
+		rule := getRulesFromConfigFiles(configPath)
+		rules = append(rules, rule...)
+	}
+	if len(rules) == 0 {
+		glog.Fatalf("There is no rules found in config files.")
+	}
+
+	// init kubernetes client
 	kubeClient, err := newKubeClient()
 	if err != nil {
 		return nil, err
@@ -46,7 +63,7 @@ func NewRemedyController() (*Controller, error) {
 	tc.eventInformerSynced = eventInformer.Informer().HasSynced
 
 	// taint manager
-	tc.taintManager = NewTaintManager(kubeClient)
+	tc.taintManager = NewTaintManager(kubeClient, rules)
 
 	// node condition informer
 	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -92,7 +109,23 @@ func (tc *Controller) Run() {
 		return
 	}
 
+	// run taintManager forever.
 	tc.taintManager.Run(wait.NeverStop)
 
 	<-tc.stopCh
+}
+
+// getRulesFromConfigFiles get rules from config file
+func getRulesFromConfigFiles(configPath string) []Rule {
+	mc := MonitorConfig{}
+	f, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		glog.Fatalf("Failed to read configuration file %q: %v", configPath, err)
+	}
+	err = json.Unmarshal(f, &mc)
+	if err != nil {
+		glog.Fatalf("Failed to unmarshal configuration file %q: %v", configPath, err)
+	}
+	glog.Infof("Finish parsing monitor config file: %+v", mc)
+	return mc.Rules
 }

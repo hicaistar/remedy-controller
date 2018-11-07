@@ -1,6 +1,5 @@
 package controller
 
-
 import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -10,16 +9,18 @@ import (
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
-
 type TaintManager struct {
-	client clientset.Interface
-	recorder record.EventRecorder
-	eventCh chan string
+	client     clientset.Interface
+	recorder   record.EventRecorder
+	eventCh    chan string
+	nodeEvents map[string]string
+	nodeConds   map[string]string
 }
 
 // NewTaintManager creates a new TaintManager that will use passed clientset to
 // communicate with the API server.
-func NewTaintManager(c clientset.Interface) *TaintManager {
+func NewTaintManager(c clientset.Interface, rules []Rule) *TaintManager {
+	// event recorder
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "remedy-taint-controller"})
 	eventBroadcaster.StartLogging(glog.Infof)
@@ -30,14 +31,20 @@ func NewTaintManager(c clientset.Interface) *TaintManager {
 		glog.Fatalf("kubeClient is nil when starting RemedyController")
 	}
 
+	// convert rules to types
+	nodeEvents, nodeConds := convertRulesToTypes(rules)
+	glog.Infof("get rules: %v, %v", nodeEvents, nodeConds)
+
 	tm := &TaintManager{
-		client:   c,
-		recorder: recorder,
+		client:     c,
+		recorder:   recorder,
+		nodeConds:  nodeConds,
+		nodeEvents: nodeEvents,
 	}
 	return tm
 }
 
-//
+// Run TaintManager
 func (tm *TaintManager) Run(stopCh <-chan struct{}) {
 	glog.Infof("Starting TaintManager")
 	defer glog.Infof("Shutting down TaintManager")
@@ -66,4 +73,19 @@ func (tm *TaintManager) NodeEventAdded(event *v1.Event) {
 	}
 	glog.Infof("get node event from: %v, reason: %v, message: %v, type: %v\n",
 		event.Name, event.Reason, event.Message, event.Type)
+}
+
+// convertRulesToTypes get specified conditions and reasons
+func convertRulesToTypes(rules []Rule) (map[string]string, map[string]string) {
+	events := make(map[string]string)
+	conds := make(map[string]string)
+	for _, rule := range rules {
+		if string(rule.Type) == Temp {
+			events[rule.Reason] = Temp
+		}
+		if string(rule.Type) == Perm {
+			conds[rule.Condition] = rule.Reason
+		}
+	}
+	return events, conds
 }

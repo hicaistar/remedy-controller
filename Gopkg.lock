@@ -609,6 +609,18 @@
   version = "v1.12.2"
 
 [[projects]]
+  digest = "1:2eb8471e4ca55869ff39041e62b9031a167bba08ef60ccbee6b5cf1308b3ecd1"
+  name = "k8s.io/node-problem-detector"
+  packages = [
+    "pkg/systemlogmonitor/logwatchers/types",
+    "pkg/systemlogmonitor/types",
+    "pkg/types",
+  ]
+  pruneopts = "UT"
+  revision = "aabd3697604f93efec319e57db4d785c27af84e7"
+  version = "v0.5.0"
+
+[[projects]]
   branch = "master"
   digest = "1:275533868224ad57e1f7f44b4fe2cbd109c0c7cf522460bff2436a59743c0284"
   name = "k8s.io/utils"
@@ -621,6 +633,7 @@
   analyzer-version = 1
   input-imports = [
     "github.com/golang/glog",
+    "github.com/spf13/pflag",
     "k8s.io/api/core/v1",
     "k8s.io/apimachinery/pkg/util/wait",
     "k8s.io/client-go/informers",
@@ -633,6 +646,8 @@
     "k8s.io/client-go/tools/record",
     "k8s.io/kubernetes/pkg/controller",
     "k8s.io/kubernetes/pkg/controller/util/node",
+    "k8s.io/node-problem-detector/pkg/systemlogmonitor/logwatchers/types",
+    "k8s.io/node-problem-detector/pkg/types",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -3,8 +3,10 @@ package main
 import (
 	"time"
 	"math/rand"
-	"remedy-controller/cmd/options"
+	"github.com/spf13/pflag"
 	"github.com/golang/glog"
+
+	"remedy-controller/cmd/options"
 	"remedy-controller/pkg/controller"
 )
 
@@ -13,11 +15,10 @@ func main() {
 
 	rco := options.NewRemedyControllerOptions()
 
-	//flag.Parse()
+	rco.AddFlags(pflag.CommandLine)
+	pflag.Parse()
 
-	glog.Infof("rco: %s", rco.PermanentConditions)
-
-	c, err := controller.NewRemedyController()
+	c, err := controller.NewRemedyController(rco)
 	if err != nil {
 		glog.Fatalf("Create remedy controller error: %v", err)
 		return
