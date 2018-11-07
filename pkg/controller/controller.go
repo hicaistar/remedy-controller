@@ -1,6 +1,5 @@
 package controller
 
-
 import (
 	"time"
 	"github.com/golang/glog"
@@ -17,10 +16,12 @@ import (
 
 
 type Controller struct {
-	stopCh             <-chan struct{}
-	taintManager       *TaintManager
-	nodeLister         corelisters.NodeLister
-	nodeInformerSynced cache.InformerSynced
+	stopCh              <-chan struct{}
+	taintManager        *TaintManager
+	nodeLister          corelisters.NodeLister
+	nodeInformerSynced  cache.InformerSynced
+	eventInformerSynced cache.InformerSynced
+	kubeClient          clientset.Interface
 }
 
 func NewRemedyController() (*Controller, error) {
@@ -30,23 +31,37 @@ func NewRemedyController() (*Controller, error) {
 	}
 
 	// taint controller
-	tc := &Controller{}
+	tc := &Controller{
+		kubeClient: kubeClient,
+	}
 
 	// node informer
-	nodeInformerFactory := informers.NewSharedInformerFactory(kubeClient, time.Second * 20)
-	nodeInformer := nodeInformerFactory.Core().V1().Nodes()
-	go nodeInformerFactory.Start(tc.stopCh)
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, time.Second * 20)
+	nodeInformer := informerFactory.Core().V1().Nodes()
+	eventInformer := informerFactory.Core().V1().Events()
+	go informerFactory.Start(tc.stopCh)
 
 	tc.nodeLister = nodeInformer.Lister()
 	tc.nodeInformerSynced = nodeInformer.Informer().HasSynced
+	tc.eventInformerSynced = eventInformer.Informer().HasSynced
 
 	// taint manager
 	tc.taintManager = NewTaintManager(kubeClient)
+
+	// node condition informer
 	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: nodeutil.CreateUpdateNodeHandler(func(oldNode, newNode *v1.Node) error {
 			tc.taintManager.NodeUpdated(oldNode, newNode)
 			return nil
 		}),
+	})
+
+	// node events informer
+	eventInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			event := obj.(*v1.Event)
+			tc.taintManager.NodeEventAdded(event)
+		},
 	})
 
 	return tc, nil
@@ -70,9 +85,10 @@ func newKubeClient() (clientset.Interface, error) {
 
 // Run starts an loop that monitors the status and events of cluster nodes.
 func (tc *Controller) Run() {
-	glog.Infof("Strating remedy controller")
+	glog.Infof("Starting remedy controller")
 
-	if !controller.WaitForCacheSync("remedy", tc.stopCh, tc.nodeInformerSynced) {
+	if !controller.WaitForCacheSync("remedy", tc.stopCh, tc.nodeInformerSynced, tc.eventInformerSynced) {
+		glog.Errorf("wait for cache sync error.")
 		return
 	}
 

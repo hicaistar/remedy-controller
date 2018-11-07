@@ -35,11 +35,11 @@
 
 [[constraint]]
   name = "k8s.io/kubernetes"
-  version = "1.12.0"
+  version = "1.12.1"
 
 [[override]]
   name = "k8s.io/apiserver"
-  version = "kubernetes-1.12.0"
+  version = "kubernetes-1.12.1"
 
 # To use reference package:
 #   vendor/k8s.io/kubernetes/pkg/util/parsers/parsers.go:36:16: undefined: reference.ParseNormalizedNamed

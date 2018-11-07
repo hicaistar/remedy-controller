@@ -1,15 +1,20 @@
 package main
 
 import (
+	"time"
+	"math/rand"
 	"remedy-controller/cmd/options"
 	"github.com/golang/glog"
 	"remedy-controller/pkg/controller"
-	"github.com/spf13/pflag"
 )
 
 func main() {
+	rand.Seed(time.Now().UTC().UnixNano())
+
 	rco := options.NewRemedyControllerOptions()
-	pflag.Parse()
+
+	//flag.Parse()
+
 	glog.Infof("rco: %s", rco.PermanentConditions)
 
 	c, err := controller.NewRemedyController()
