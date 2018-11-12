@@ -1,29 +1,28 @@
 package controller
 
 import (
-	"time"
-	"io/ioutil"
 	"encoding/json"
+	"io/ioutil"
+	"time"
 
 	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/informers"
-	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/kubernetes/pkg/controller"
 	nodeutil "k8s.io/kubernetes/pkg/controller/util/node"
 
 	"remedy-controller/cmd/options"
 )
 
-
 type Controller struct {
 	stopCh              <-chan struct{}
-	taintManager        *TaintManager
+	drainManager        *DrainManager
 	nodeLister          corelisters.NodeLister
 	nodeInformerSynced  cache.InformerSynced
 	eventInformerSynced cache.InformerSynced
@@ -53,7 +52,7 @@ func NewRemedyController(options *options.RemedyControllerOptions) (*Controller,
 	}
 
 	// node informer
-	informerFactory := informers.NewSharedInformerFactory(kubeClient, time.Second * 20)
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, time.Second*60)
 	nodeInformer := informerFactory.Core().V1().Nodes()
 	eventInformer := informerFactory.Core().V1().Events()
 	go informerFactory.Start(tc.stopCh)
@@ -62,13 +61,13 @@ func NewRemedyController(options *options.RemedyControllerOptions) (*Controller,
 	tc.nodeInformerSynced = nodeInformer.Informer().HasSynced
 	tc.eventInformerSynced = eventInformer.Informer().HasSynced
 
-	// taint manager
-	tc.taintManager = NewTaintManager(kubeClient, rules)
+	// new drain manager with rules.
+	tc.drainManager = NewDrainManager(kubeClient, rules)
 
 	// node condition informer
 	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: nodeutil.CreateUpdateNodeHandler(func(oldNode, newNode *v1.Node) error {
-			tc.taintManager.NodeUpdated(oldNode, newNode)
+			tc.drainManager.NodeUpdated(newNode)
 			return nil
 		}),
 	})
@@ -77,7 +76,16 @@ func NewRemedyController(options *options.RemedyControllerOptions) (*Controller,
 	eventInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			event := obj.(*v1.Event)
-			tc.taintManager.NodeEventAdded(event)
+			tc.drainManager.NodeEventUpdated(nil, event, false)
+		},
+		UpdateFunc: func(pre, obj interface{}) {
+			preEvent := pre.(*v1.Event)
+			newEvent := obj.(*v1.Event)
+			tc.drainManager.NodeEventUpdated(preEvent, newEvent, false)
+		},
+		DeleteFunc: func(obj interface{}) {
+			event := obj.(*v1.Event)
+			tc.drainManager.NodeEventUpdated(nil, event, true)
 		},
 	})
 
@@ -110,7 +118,7 @@ func (tc *Controller) Run() {
 	}
 
 	// run taintManager forever.
-	tc.taintManager.Run(wait.NeverStop)
+	tc.drainManager.Run(wait.NeverStop)
 
 	<-tc.stopCh
 }

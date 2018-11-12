@@ -1,10 +1,11 @@
 package main
 
 import (
-	"time"
 	"math/rand"
-	"github.com/spf13/pflag"
+	"time"
+
 	"github.com/golang/glog"
+	"github.com/spf13/pflag"
 
 	"remedy-controller/cmd/options"
 	"remedy-controller/pkg/controller"

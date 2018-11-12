@@ -1,8 +1,9 @@
 package controller
 
 import (
-	"k8s.io/node-problem-detector/pkg/types"
 	watchertypes "k8s.io/node-problem-detector/pkg/systemlogmonitor/logwatchers/types"
+	"k8s.io/node-problem-detector/pkg/types"
+	"time"
 )
 
 // MonitorConfig is the configuration of log monitor.
@@ -36,7 +37,23 @@ type Rule struct {
 
 const (
 	// Temp means the problem is temporary, only need to report an event.
-	Temp  = "temporary"
+	Temp = "temporary"
 	// Perm means the problem is permanent, need to change the node condition.
-	Perm  = "permanent"
+	Perm = "permanent"
 )
+
+type EventType struct {
+	// Type is the type of matched problem, like temporary
+	Type string
+	// Name is the type name, derived from reason and condition
+	Name string
+	// NodeName is the node has problem
+	NodeName string
+}
+
+type EventRecord struct {
+	// Name is the type name
+	Name string
+	// LastTimestamp
+	LastTimestamp time.Time
+}
