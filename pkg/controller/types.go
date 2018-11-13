@@ -37,7 +37,7 @@ type Rule struct {
 
 // Config describe details user specifies.
 type Config struct {
-	Rules []Rule
+	Rules              []Rule
 	UnCordonNodePeriod int32
 }
 

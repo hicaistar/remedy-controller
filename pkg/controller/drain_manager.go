@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -17,7 +18,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/controller/nodelifecycle/scheduler"
 	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 type DrainManager struct {
@@ -71,7 +71,7 @@ func NewDrainManager(c clientset.Interface, config Config) *DrainManager {
 func (dm *DrainManager) Run(stopCh <-chan struct{}) {
 	glog.Infof("Starting DrainManager")
 	defer glog.Infof("Shutting down DrainManager")
-	go wait.Until(dm.remedyNodesLoop, time.Minute * loopPeriod, wait.NeverStop)
+	go wait.Until(dm.remedyNodesLoop, time.Minute*loopPeriod, wait.NeverStop)
 	for {
 		select {
 		case event := <-dm.eventCh:
@@ -253,7 +253,7 @@ func (dm *DrainManager) cordonNode(event *EventType) error {
 	if _, err := dm.client.CoreV1().Nodes().Update(node); err != nil {
 		return fmt.Errorf("cordon update node error: %v", err)
 	}
-	dm.Eventf(v1.EventTypeNormal, event.NodeName,"npd-problem", fmt.Sprintf("cordon node because %v ", event.Name))
+	dm.Eventf(v1.EventTypeNormal, event.NodeName, "npd-problem", fmt.Sprintf("cordon node because %v ", event.Name))
 	return nil
 }
 
@@ -378,7 +378,7 @@ func getEventRecorder(c clientset.Interface, nodeName string) record.EventRecord
 	return recorder
 }
 
-func(dm *DrainManager) Eventf(eventType, nodeName, reason, messageFmt string, args ...interface{}) {
+func (dm *DrainManager) Eventf(eventType, nodeName, reason, messageFmt string, args ...interface{}) {
 	recorder, found := dm.recorders[nodeName]
 	if !found {
 		// TODO: If needed use separate client and QPS limit for event.
@@ -386,9 +386,9 @@ func(dm *DrainManager) Eventf(eventType, nodeName, reason, messageFmt string, ar
 		dm.recorders[nodeName] = recorder
 	}
 	ref := &v1.ObjectReference{
-		Kind: "Node",
-		Name: nodeName,
-		UID: types.UID(nodeName),
+		Kind:      "Node",
+		Name:      nodeName,
+		UID:       types.UID(nodeName),
 		Namespace: "",
 	}
 	recorder.Eventf(ref, eventType, reason, messageFmt, args...)

@@ -48,6 +48,7 @@ func TestConvertRulesToTypes(t *testing.T) {
 }
 
 func TestDrainManager(t *testing.T) {
+	config := Config{}
 	rules := []Rule{
 		{
 			Type:      Perm,
@@ -59,10 +60,11 @@ func TestDrainManager(t *testing.T) {
 			Reason: testTempCondition,
 		},
 	}
+	config.Rules = rules
 
 	count := 1
 	client := fakeclient.NewSimpleClientset()
-	dm := NewDrainManager(client, rules)
+	dm := NewDrainManager(client, config)
 	defer close(dm.eventCh)
 
 	node := v1.Node{}
