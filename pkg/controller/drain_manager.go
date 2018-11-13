@@ -34,21 +34,23 @@ type DrainManager struct {
 
 const (
 	retries                 = 5
+	loopPeriod              = 5
 	graceUncordonNodePeriod = 10
 )
 
 // NewTaintManager creates a new TaintManager that will use passed clientset to
 // communicate with the API server.
-func NewDrainManager(c clientset.Interface, rules []Rule) *DrainManager {
+func NewDrainManager(c clientset.Interface, config Config) *DrainManager {
 	// convert rules to types
-	nodeEvents, nodeConds := convertRulesToTypes(rules)
+	nodeEvents, nodeConds := convertRulesToTypes(config.Rules)
 	glog.Infof("get rules, events: (%v), conditions: (%v)", nodeEvents, nodeConds)
+	glog.Infof("get uncordon node period: %v minutes.", config.UnCordonNodePeriod)
 	eventCh := make(chan *EventType, 1)
 	recorders := make(map[string]record.EventRecorder)
 
 	dm := &DrainManager{
 		client:                  c,
-		recorders:                recorders,
+		recorders:               recorders,
 		nodeConds:               nodeConds,
 		nodeEvents:              nodeEvents,
 		eventCh:                 eventCh,
@@ -56,6 +58,10 @@ func NewDrainManager(c clientset.Interface, rules []Rule) *DrainManager {
 		occurredEvents:          make(map[string][]EventRecord),
 		graceUncordonNodePeriod: time.Minute * time.Duration(graceUncordonNodePeriod),
 	}
+	if config.UnCordonNodePeriod > 0 {
+		dm.graceUncordonNodePeriod = time.Minute * time.Duration(config.UnCordonNodePeriod)
+	}
+
 	dm.drainEvictionQueue = scheduler.CreateWorkerQueue(evictPodHandler(dm.client))
 
 	return dm
@@ -63,15 +69,15 @@ func NewDrainManager(c clientset.Interface, rules []Rule) *DrainManager {
 
 // Run TaintManager
 func (dm *DrainManager) Run(stopCh <-chan struct{}) {
-	glog.Infof("Starting TaintManager")
-	defer glog.Infof("Shutting down TaintManager")
-	go wait.Until(dm.remedyNodesLoop, time.Minute*5, wait.NeverStop)
+	glog.Infof("Starting DrainManager")
+	defer glog.Infof("Shutting down DrainManager")
+	go wait.Until(dm.remedyNodesLoop, time.Minute * loopPeriod, wait.NeverStop)
 	for {
 		select {
 		case event := <-dm.eventCh:
 			dm.eventsHandler(event)
 		case <-stopCh:
-			glog.Infof("received stop.")
+			glog.Infof("DrainManager received stop.")
 			break
 		}
 	}

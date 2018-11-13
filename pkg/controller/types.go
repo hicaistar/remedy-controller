@@ -35,6 +35,12 @@ type Rule struct {
 	Pattern string `json:"pattern"`
 }
 
+// Config describe details user specifies.
+type Config struct {
+	Rules []Rule
+	UnCordonNodePeriod int32
+}
+
 const (
 	// Temp means the problem is temporary, only need to report an event.
 	Temp = "temporary"

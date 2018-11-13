@@ -30,7 +30,8 @@ type Controller struct {
 }
 
 func NewRemedyController(options *options.RemedyControllerOptions) (*Controller, error) {
-	// parse config path to rules
+	// parse user configurations.
+	config := Config{}
 	var rules []Rule
 	for _, configPath := range options.MonitorConfigPaths {
 		rule := getRulesFromConfigFiles(configPath)
@@ -39,6 +40,8 @@ func NewRemedyController(options *options.RemedyControllerOptions) (*Controller,
 	if len(rules) == 0 {
 		glog.Fatalf("There is no rules found in config files.")
 	}
+	config.Rules = rules
+	config.UnCordonNodePeriod = options.GraceUncordonNodePeriod
 
 	// init kubernetes client
 	kubeClient, err := newKubeClient()
@@ -62,7 +65,7 @@ func NewRemedyController(options *options.RemedyControllerOptions) (*Controller,
 	tc.eventInformerSynced = eventInformer.Informer().HasSynced
 
 	// new drain manager with rules.
-	tc.drainManager = NewDrainManager(kubeClient, rules)
+	tc.drainManager = NewDrainManager(kubeClient, config)
 
 	// node condition informer
 	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -134,6 +137,6 @@ func getRulesFromConfigFiles(configPath string) []Rule {
 	if err != nil {
 		glog.Fatalf("Failed to unmarshal configuration file %q: %v", configPath, err)
 	}
-	glog.Infof("Finish parsing monitor config file: %+v", mc)
+	glog.V(5).Infof("Finish parsing monitor config file: %+v", mc)
 	return mc.Rules
 }
