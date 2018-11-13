@@ -62,7 +62,7 @@ spec:
     spec:
       serviceAccountName: remedy-controller
       containers:
-      - image: remedy-controller
+      - image: remedy-controller:0.1.0
         imagePullPolicy: IfNotPresent
         name: remedy
         command:
