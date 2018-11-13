@@ -74,7 +74,13 @@ spec:
         - name: config
           mountPath: /config
           readOnly: true
+        - name: localtime
+          mountPath: /etc/localtime
+          readOnly: true
       volumes:
       - name: config
         configMap:
           name: node-problem-detector-config
+      - name: localtime
+        hostPath:
+          path: /etc/localtime

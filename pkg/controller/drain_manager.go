@@ -17,11 +17,12 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/controller/nodelifecycle/scheduler"
 	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type DrainManager struct {
 	client                  clientset.Interface
-	recorder                record.EventRecorder
+	recorders               map[string]record.EventRecorder
 	eventCh                 chan *EventType
 	nodeEvents              map[string]string
 	nodeConds               map[string]string
@@ -39,25 +40,15 @@ const (
 // NewTaintManager creates a new TaintManager that will use passed clientset to
 // communicate with the API server.
 func NewDrainManager(c clientset.Interface, rules []Rule) *DrainManager {
-	// event recorder
-	eventBroadcaster := record.NewBroadcaster()
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "remedy-taint-controller"})
-	eventBroadcaster.StartLogging(glog.Infof)
-	if c != nil {
-		glog.Infof("Sending events to api server")
-		eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: c.CoreV1().Events("")})
-	} else {
-		glog.Fatalf("kubeClient is nil when starting RemedyController")
-	}
-
 	// convert rules to types
 	nodeEvents, nodeConds := convertRulesToTypes(rules)
 	glog.Infof("get rules, events: (%v), conditions: (%v)", nodeEvents, nodeConds)
 	eventCh := make(chan *EventType, 1)
+	recorders := make(map[string]record.EventRecorder)
 
 	dm := &DrainManager{
 		client:                  c,
-		recorder:                recorder,
+		recorders:                recorders,
 		nodeConds:               nodeConds,
 		nodeEvents:              nodeEvents,
 		eventCh:                 eventCh,
@@ -213,7 +204,17 @@ func (dm *DrainManager) NodeEventUpdated(pre, new *v1.Event, isDeleted bool) {
 			}
 			preEvents[i] = event
 		}
+
 		dm.occurredEvents[nodeName] = preEvents
+
+		// trigger cordon node.
+		e := EventType{
+			Name:     new.Reason,
+			Type:     Temp,
+			NodeName: new.Source.Host,
+		}
+		dm.eventCh <- &e
+
 		glog.Infof("Update: event %v occur again.", new.Reason)
 	}
 }
@@ -246,7 +247,7 @@ func (dm *DrainManager) cordonNode(event *EventType) error {
 	if _, err := dm.client.CoreV1().Nodes().Update(node); err != nil {
 		return fmt.Errorf("cordon update node error: %v", err)
 	}
-	dm.recorder.Eventf(node, "Normal", "npd-problem", fmt.Sprintf("found %v status on node", event.Type))
+	dm.Eventf(v1.EventTypeNormal, event.NodeName,"npd-problem", fmt.Sprintf("cordon node because %v ", event.Name))
 	return nil
 }
 
@@ -358,4 +359,31 @@ func isPodNoNeedToEvict(pod *v1.Pod) bool {
 		}
 	}
 	return kubepod.IsStaticPod(pod) || isDaemonSetPod
+}
+
+// getEventRecorder generates a recorder for specific node name.
+func getEventRecorder(c clientset.Interface, nodeName string) record.EventRecorder {
+	// event recorder
+	eventBroadcaster := record.NewBroadcaster()
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "remedy-controller", Host: nodeName})
+	eventBroadcaster.StartLogging(glog.Infof)
+	eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: c.CoreV1().Events("")})
+	glog.V(5).Infof("Create event recorder for node: %s", nodeName)
+	return recorder
+}
+
+func(dm *DrainManager) Eventf(eventType, nodeName, reason, messageFmt string, args ...interface{}) {
+	recorder, found := dm.recorders[nodeName]
+	if !found {
+		// TODO: If needed use separate client and QPS limit for event.
+		recorder = getEventRecorder(dm.client, nodeName)
+		dm.recorders[nodeName] = recorder
+	}
+	ref := &v1.ObjectReference{
+		Kind: "Node",
+		Name: nodeName,
+		UID: types.UID(nodeName),
+		Namespace: "",
+	}
+	recorder.Eventf(ref, eventType, reason, messageFmt, args...)
 }
