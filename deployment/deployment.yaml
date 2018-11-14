@@ -23,8 +23,11 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods
   - nodes
   - events
+  - pods/eviction
+  - pods/evictions
   verbs:
   - watch
   - list

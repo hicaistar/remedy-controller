@@ -54,7 +54,8 @@ func NewRemedyController(options *options.RemedyControllerOptions) (*Controller,
 		kubeClient: kubeClient,
 	}
 
-	// node informer
+	// node informer and event informer
+	// TODO: add some filters here??
 	informerFactory := informers.NewSharedInformerFactory(kubeClient, time.Second*60)
 	nodeInformer := informerFactory.Core().V1().Nodes()
 	eventInformer := informerFactory.Core().V1().Events()

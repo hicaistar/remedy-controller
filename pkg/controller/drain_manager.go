@@ -34,11 +34,11 @@ type DrainManager struct {
 
 const (
 	retries                 = 5
-	loopPeriod              = 5
+	loopPeriod              = 1
 	graceUncordonNodePeriod = 10
 )
 
-// NewTaintManager creates a new TaintManager that will use passed clientset to
+// NewDrainManager creates a new DrainManager that will use passed clientset to
 // communicate with the API server.
 func NewDrainManager(c clientset.Interface, config Config) *DrainManager {
 	// convert rules to types
@@ -67,7 +67,7 @@ func NewDrainManager(c clientset.Interface, config Config) *DrainManager {
 	return dm
 }
 
-// Run TaintManager
+// Run DrainManager
 func (dm *DrainManager) Run(stopCh <-chan struct{}) {
 	glog.Infof("Starting DrainManager")
 	defer glog.Infof("Shutting down DrainManager")
@@ -83,42 +83,45 @@ func (dm *DrainManager) Run(stopCh <-chan struct{}) {
 	}
 }
 
-// remedyNodesLoop will un-cordon node if the event had happened for the duration specified.
+// remedyNodesLoop will un-cordon node if the event had happened for the period specified.
 func (dm *DrainManager) remedyNodesLoop() {
 	for node, records := range dm.occurredEvents {
+		// condition is not good.
 		if status, ok := dm.nodeException[node]; ok {
 			if status {
 				glog.Infof("node is unavailable caused by permanent problem.")
 				continue
 			}
 		}
+		// no event records.
 		if len(records) == 0 {
 			dm.unCordonNode(node)
 			continue
 		}
+		// check all event records on this node.
+		available := true
 		for _, event := range records {
-			available := true
 			duration := time.Now().Sub(event.LastTimestamp)
 			if duration.Minutes() < dm.graceUncordonNodePeriod.Minutes() {
 				available = false
 			}
-			if available {
-				// un-cordon node
-				dm.unCordonNode(node)
-				glog.V(5).Infof("node: %v is available, un-cordon it.", node)
-			}
+		}
+		if available {
+			// node is schedulable, uncordon it.
+			dm.unCordonNode(node)
+			glog.V(5).Infof("node: %v is available, un-cordon it.", node)
 		}
 	}
 }
 
-// NodeUpdated is used to notify TaintManager about Node conditions' changes.
+// NodeUpdated is used to notify DrainManager about Node conditions' changes.
 func (dm *DrainManager) NodeUpdated(newNode *v1.Node) {
 	newConditions := newNode.Status.Conditions
 	// choose conditions matching rules
 	for _, c := range newConditions {
 		_, ok := dm.nodeConds[string(c.Type)]
 		if ok {
-			// If one of Node Conditions is 'True', trigger eviction
+			// If one of Node Conditions is 'True', trigger an eviction
 			// Skip 'False' and 'Unknown' status
 			if c.Status == "True" {
 				event := EventType{
@@ -126,11 +129,12 @@ func (dm *DrainManager) NodeUpdated(newNode *v1.Node) {
 					Type:     Perm,
 					NodeName: newNode.Name,
 				}
-				// If eviction has been triggered, skip it.
+				// If an eviction has been triggered, skip it.
 				status, ok := dm.nodeException[newNode.Name]
 				if !ok || (ok && !status) {
 					dm.eventCh <- &event
-					dm.nodeException[newNode.Name] = true
+					// do update at eventHandler.
+					// dm.nodeException[newNode.Name] = true
 				}
 				return
 			}
@@ -165,6 +169,7 @@ func (dm *DrainManager) NodeEventUpdated(pre, new *v1.Event, isDeleted bool) {
 			return
 		}
 
+		// delete the event recorded from occurred events.
 		for i, event := range preEvents {
 			if event.Name == new.Reason {
 				preEvents = append(preEvents[:i], preEvents[i+1:]...)
@@ -196,7 +201,7 @@ func (dm *DrainManager) NodeEventUpdated(pre, new *v1.Event, isDeleted bool) {
 		return
 	}
 
-	// Update event
+	// Updated event
 	if pre != nil && pre.Count != new.Count {
 		// update occurred events time
 		preEvents, ok := dm.occurredEvents[nodeName]
@@ -241,6 +246,7 @@ func convertRulesToTypes(rules []Rule) (map[string]string, map[string]string) {
 }
 
 // cordonNode cordon the supplied node. Marks it unschedulable for new pods.
+// and record event on this node.
 func (dm *DrainManager) cordonNode(event *EventType) error {
 	node, err := dm.client.CoreV1().Nodes().Get(event.NodeName, metav1.GetOptions{})
 	if err != nil {
@@ -257,7 +263,7 @@ func (dm *DrainManager) cordonNode(event *EventType) error {
 	return nil
 }
 
-// cordonNode cordon the supplied node. Marks it unschedulable for new pods.
+// unCordonNode uncordon the supplied node. Marks it schedulable for new pods.
 func (dm *DrainManager) unCordonNode(nodeName string) error {
 	node, err := dm.client.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 	if err != nil {
@@ -273,6 +279,7 @@ func (dm *DrainManager) unCordonNode(nodeName string) error {
 	return nil
 }
 
+// getPodsAssignedToNode get all pods running on the supplied node.
 func (dm *DrainManager) getPodsAssignedToNode(nodeName string) ([]v1.Pod, error) {
 	selector := fields.SelectorFromSet(fields.Set{"spec.nodeName": nodeName})
 	pods, err := dm.client.CoreV1().Pods(v1.NamespaceAll).List(metav1.ListOptions{
@@ -287,7 +294,7 @@ func (dm *DrainManager) getPodsAssignedToNode(nodeName string) ([]v1.Pod, error)
 		time.Sleep(100 * time.Millisecond)
 	}
 	if err != nil {
-		return []v1.Pod{}, fmt.Errorf("failed to get Pods assigned to node %v", nodeName)
+		return []v1.Pod{}, fmt.Errorf("failed to get Pods assigned to node %v, error: %v", nodeName, err)
 	}
 	return pods.Items, nil
 }
@@ -319,6 +326,7 @@ func (dm *DrainManager) eventsHandler(event *EventType) error {
 	if event == nil {
 		return nil
 	}
+	// temporary event, only cordon node.
 	if event.Type == Temp {
 		err = dm.cordonNode(event)
 		if err != nil {
@@ -326,6 +334,7 @@ func (dm *DrainManager) eventsHandler(event *EventType) error {
 		}
 		return err
 	}
+	// permanent condition, cordon node and evict pods.
 	if event.Type == Perm {
 		err = dm.cordonNode(event)
 		if err != nil {
@@ -350,6 +359,8 @@ func (dm *DrainManager) eventsHandler(event *EventType) error {
 			}
 			dm.drainEvictionQueue.AddWork(scheduler.NewWorkArgs(pod.Name, pod.Namespace), now, now)
 		}
+		// set node unschedulable inner.
+		dm.nodeException[event.NodeName] = true
 	}
 	return nil
 }

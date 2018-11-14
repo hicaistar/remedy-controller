@@ -10,5 +10,5 @@ such as drain/cordon/uncordon node.
 - `--uncordon-node-period`:Grace period of uncording node.
 
 ### Build Image
-$ docker build -t remedy-controller:0.1.0 .   
+$ docker build -t remedy-controller:0.1.0 .
 ***Note***: By default it will be built from golang:1.10.3, you can replace the builder image with yours.
