@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/controller/nodelifecycle/scheduler"
 	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
+	"k8s.io/client-go/util/workqueue"
 )
 
 type DrainManager struct {
@@ -30,6 +31,7 @@ type DrainManager struct {
 	occurredEvents          map[string][]EventRecord
 	drainEvictionQueue      *scheduler.TimedWorkerQueue
 	graceUncordonNodePeriod time.Duration
+	nodeUpdateQueue         workqueue.Interface
 }
 
 const (
@@ -56,6 +58,7 @@ func NewDrainManager(c clientset.Interface, config Config) *DrainManager {
 		eventCh:                 eventCh,
 		nodeException:           make(map[string]bool),
 		occurredEvents:          make(map[string][]EventRecord),
+		nodeUpdateQueue:         workqueue.New(),
 		graceUncordonNodePeriod: time.Minute * time.Duration(graceUncordonNodePeriod),
 	}
 	if config.UnCordonNodePeriod > 0 {
@@ -72,6 +75,27 @@ func (dm *DrainManager) Run(stopCh <-chan struct{}) {
 	glog.Infof("Starting DrainManager")
 	defer glog.Infof("Shutting down DrainManager")
 	go wait.Until(dm.remedyNodesLoop, time.Minute*loopPeriod, wait.NeverStop)
+
+	// Function that is responsible for taking work items out of the workqueue and putting them
+	// into channels.
+	go func(stopCh <-chan struct{}) {
+		for {
+			item, shutdown := dm.nodeUpdateQueue.Get()
+			if shutdown {
+				break
+			}
+			nodeUpdate := item.(*EventType)
+			select {
+			case <-stopCh:
+				dm.nodeUpdateQueue.Done(item)
+			    break
+			case dm.eventCh <- nodeUpdate:
+				glog.Infof("Get node update event: %v", nodeUpdate)
+			}
+		}
+	}(stopCh)
+
+	// Loop that wait for receiving event from channel.
 	for {
 		select {
 		case event := <-dm.eventCh:
@@ -132,9 +156,7 @@ func (dm *DrainManager) NodeUpdated(newNode *v1.Node) {
 				// If an eviction has been triggered, skip it.
 				status, ok := dm.nodeException[newNode.Name]
 				if !ok || (ok && !status) {
-					dm.eventCh <- &event
-					// do update at eventHandler.
-					// dm.nodeException[newNode.Name] = true
+					dm.nodeUpdateQueue.Add(&event)
 				}
 				return
 			}
@@ -143,7 +165,12 @@ func (dm *DrainManager) NodeUpdated(newNode *v1.Node) {
 	// Unless all of Node Conditions are 'False', set node schedulable.
 	if dm.nodeException[newNode.Name] == true {
 		glog.Infof("node: %v condition is normal, set it schedulable.", newNode.Name)
-		dm.unCordonNode(newNode.Name)
+		event := EventType{
+			Type:     Perm,
+			NodeName: newNode.Name,
+			NodeCondition: "False",
+		}
+		dm.nodeUpdateQueue.Add(&event)
 	}
 	dm.nodeException[newNode.Name] = false
 }
@@ -195,7 +222,7 @@ func (dm *DrainManager) NodeEventUpdated(pre, new *v1.Event, isDeleted bool) {
 			Type:     Temp,
 			NodeName: new.Source.Host,
 		}
-		dm.eventCh <- &e
+		dm.nodeUpdateQueue.Add(&e)
 
 		glog.Infof("Add node: %v event: %v to occurred events, and cordon node.", nodeName, new.Reason)
 		return
@@ -224,7 +251,7 @@ func (dm *DrainManager) NodeEventUpdated(pre, new *v1.Event, isDeleted bool) {
 			Type:     Temp,
 			NodeName: new.Source.Host,
 		}
-		dm.eventCh <- &e
+		dm.nodeUpdateQueue.Add(&e)
 
 		glog.Infof("Update: event %v occur again.", new.Reason)
 	}
@@ -324,6 +351,12 @@ func (dm *DrainManager) eventsHandler(event *EventType) error {
 	glog.Infof("eventsHandler receive event: %v", event)
 	var err error
 	if event == nil {
+		return nil
+	}
+
+	// node condition node is 'false'
+	if event.NodeCondition == "False" {
+		dm.unCordonNode(event.NodeName)
 		return nil
 	}
 	// temporary event, only cordon node.

@@ -55,6 +55,8 @@ type EventType struct {
 	Name string
 	// NodeName is the node has problem
 	NodeName string
+	// NodeCondition is the condition of the node
+	NodeCondition string
 }
 
 type EventRecord struct {
